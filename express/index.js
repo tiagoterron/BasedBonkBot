@@ -42,13 +42,16 @@ const corsOptions = {
 // Fix: Remove quotes around corsOptions
 app.use(cors(corsOptions)); // Not 'corsOptions'
 app.options('*', cors(corsOptions));
+app.use('/images', express.static(path.join(__dirname, '../images')));
 app.use(express.static("public"));
-app.use('/images', express.static(path.join('./', 'public')));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const buildPath = path.resolve(__dirname, '../app');
+const imagesPath = path.resolve(__dirname, '../images');
 app.use(express.static(buildPath));
+app.use(express.static(imagesPath));
+
 
 
 
@@ -93,7 +96,8 @@ const {
     checkWallets,
     loadWalletsBalances,
     loadWalletsBalanceSorted
-} = require("../controllers/helper")
+} = require("../controllers/helper");
+const { default: axios } = require('axios');
 
 app.use(express.json());
 app.use(express.static('public')); // Serve the HTML file
@@ -877,6 +881,18 @@ app.get('/api/settings', (req, res) => {
     }
 });
 
+app.get('/image/:filename', (req, res) => {
+    const filename = req.params.filename;
+    const imagePath = path.join(__dirname, '../images', filename);
+    
+    // Check if file exists
+    if (fs.existsSync(imagePath)) {
+        res.sendFile(imagePath);
+    } else {
+        res.status(404).send('Image not found');
+    }
+});
+
 app.post('/api/settings', async (req, res) => {
     try {
         const { rpcUrl, gasMax } = req.body;
@@ -1155,10 +1171,36 @@ app.get('/api/', (req, res) => {
     })
 })
 
+async function saveImage(address) {
+    const file_exists = fs.existsSync(path.join(__dirname, `../images/${address}.png`))
+    if(file_exists) return
+    const url = `https://dd.dexscreener.com/ds-data/tokens/base/${address}.png`;
+  try {
+    const response = await fetch(url);
+    const buffer = await response.arrayBuffer();
+    
+    fs.writeFileSync(path.join(__dirname, `../images/${address}.png`), Buffer.from(buffer));
+    console.log(`Image ${address} saved successfully!`);
+  } catch (error) {
+    console.error('Error saving image:', error);
+  }
+}
+
 // Get all tokens in database
-app.get('/api/tokens', (req, res) => {
+app.get('/api/tokens', async (req, res) => {
     try {
-        const tokens = loadTokens();
+        let tokens = await loadTokens();
+        try{
+
+            for(let i = 0;i< tokens.length;i++){
+                const { data } = await axios.get(`https://api.dexscreener.io/latest/dex/tokens/${tokens[i].address}`)
+                const { pairs } = data;
+                saveImage(tokens[i].address)
+                tokens[i].metadata = pairs
+            }
+        }catch(err){
+            console.log(err)
+        }
         
         // Group tokens by symbol for better organization
         const tokensBySymbol = {};

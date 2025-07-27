@@ -5648,7 +5648,11 @@ async function main() {
                 if (wallets.length === 0) throw new Error('No wallets found');
                 startAt = parseInt(args[0]) || 0;
                 endAt = parseInt(args[1]) || wallets.length;
-                tokenAddress = args[2] || random(defaultTokens["V3"]);
+                tokenAddress = args[2]
+
+                 if (!tokenAddress) {
+                    throw new Error('Missing contract address');
+                }
 
                 successCount = 0;
                 failCount = 0;
@@ -6101,7 +6105,11 @@ async function main() {
 
             case 'volumeV3Fresh':
             // Load wallets is not needed for fresh mode, but keeping variable structure consistent
-            const freshV3Token = args[0] || random(defaultTokens["V3"]); // Unique variable name
+            const freshV3Token = args[0]; // Unique variable name
+
+             if (!freshV3Token) {
+                throw new Error('Missing contract address');
+            }
 
             let v3BuyAndSellFresh = args[3] === "true";
             
@@ -6110,6 +6118,7 @@ async function main() {
             delayBetweenCycles = parseInt(args[3]) || 5000; // milliseconds between full cycles
             delayOnError = parseInt(args[4]) || 3000; // milliseconds when error occurs
 
+           
             
             
             if (!config.fundingPrivateKey) {
