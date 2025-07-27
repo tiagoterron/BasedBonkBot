@@ -796,7 +796,7 @@ async function createWallets(count) {
 
 async function getContractAddress(tokenAddress, ownerAddress, deployerContractAddress = contracts.deployerContract) {
     try {
-        console.log(`Retrieving contract address for:`);
+        console.log(`Retrieving contract address for: `);
         console.log(`Token: ${tokenAddress}`);
         console.log(`Owner: ${ownerAddress}`);
         console.log(`Deployer Contract: ${deployerContractAddress}`);
