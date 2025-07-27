@@ -802,6 +802,22 @@ validate_project_structure() {
     done
 }
 
+create_required_folders() {
+    log "📁 Creating required project folders..."
+    
+    # Get the project directory path
+    local project_path="$DOWNLOAD_DIR"
+    
+    # Create wallets folder
+    if mkdir -p "$project_path/wallets"; then
+        log "✅ Created 'wallets' folder"
+
+    if mkdir -p "$project_path/tokens"; then
+        log "✅ Created 'tokens' folder"
+        
+    log "🎉 All required folders and files created successfully!"
+}
+
 # Function to check system status
 check_system_status() {
     echo -e "${BLUE}📊 BasedBonkBot System Status${NC}"
@@ -1000,6 +1016,12 @@ case ${1:-help} in
         # Download project from GitHub
         if ! download_project; then
             error_log "Failed to download BasedBonkBot project"
+            exit 1
+        fi
+       
+        # Create folders
+        if ! create_required_folders; then
+            error_log "Failed to create folders"
             exit 1
         fi
         
