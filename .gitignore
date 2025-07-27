@@ -1,0 +1,7 @@
+.env
+node_modules
+wallets.json
+solidity
+wallets_balances.json
+app
+tokens.json
