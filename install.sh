@@ -811,11 +811,14 @@ create_required_folders() {
     # Create wallets folder
     if mkdir -p "$project_path/wallets"; then
         log "✅ Created 'wallets' folder"
-
+    fi
+    
+    # Create tokens folder
     if mkdir -p "$project_path/tokens"; then
         log "✅ Created 'tokens' folder"
-        
-    log "🎉 All required folders and files created successfully!"
+    fi
+    
+    log "🎉 All required folders created successfully!"
 }
 
 # Function to check system status
