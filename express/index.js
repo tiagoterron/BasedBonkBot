@@ -628,8 +628,14 @@ app.get('/api/wallets/balances', async (req, res) => {
     try {
         const wallets = await loadWalletsBalanceSorted();
 
+        // Remove private keys from the response for security
+        const sanitizedWallets = wallets.map(wallet => {
+            // Create a copy without the private key
+            const { privateKey, ...walletWithoutPrivateKey } = wallet;
+            return walletWithoutPrivateKey;
+        });
 
-        res.status(200).json(wallets);
+        res.status(200).json(sanitizedWallets);
 
     } catch (error) {
         console.error('Error fetching wallet stats:', error);
@@ -1473,7 +1479,7 @@ app.get('/api/dashboard', async (req, res) => {
 app.post('/api/execute', async (req, res) => {
     const { command, args = [] } = req.body;
     
-    console.log(`Executing command: ${command} ${args.join(' ')}`);
+    // console.log(`Executing command: ${command} ${args.join(' ')}`);
     
     // Validate the command and arguments
     const validationErrors = validateCommand(command, args);

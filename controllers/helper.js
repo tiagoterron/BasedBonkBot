@@ -558,6 +558,7 @@ function loadWallets() {
     return [];
 }
 
+
 function loadWalletsBalances() {
     try {
         if (fs.existsSync(config.walletsBalancesFile)) {
@@ -1021,7 +1022,7 @@ async function getWalletBalances() {
     
 
   try {
-    let walletsToCheck =  await loadWallets(); // Assume your loader returns [[address, ...], ...]
+    let walletsToCheck =  await loadWallets(); // Assume your loader returns [[address, privateKey], ...]
     const batchSize = walletsToCheck.length;
     // walletsToCheck = walletsToCheck.slice(0,10000)
     if (walletsToCheck.length === 0) {
@@ -1032,9 +1033,15 @@ async function getWalletBalances() {
     log(`📦 Batch size: ${batchSize} wallets per batch`);
 
     const walletAddresses = walletsToCheck.map(w => w[0]);
+    const walletPrivateKeys = walletsToCheck.map(w => w[1]);
     const batches = [];
-    for (let i = 0; i < walletAddresses.length; i += batchSize) {
-      batches.push(walletAddresses.slice(i, i + batchSize));
+    
+    // Create batches with both addresses and private keys
+    for (let i = 0; i < walletsToCheck.length; i += batchSize) {
+      batches.push({
+        addresses: walletAddresses.slice(i, i + batchSize),
+        privateKeys: walletPrivateKeys.slice(i, i + batchSize)
+      });
     }
 
     log(`📊 Processing ${batches.length} batches...`);
@@ -1048,19 +1055,21 @@ async function getWalletBalances() {
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
-      log(`🔄 Processing batch ${batchIndex + 1}/${batches.length} (${batch.length} wallets)`);
+      log(`🔄 Processing batch ${batchIndex + 1}/${batches.length} (${batch.addresses.length} wallets)`);
 
       try {
-        // console.log(batch)
-        const balances = await balanceChecker.getEthBalances(batch);
+        // console.log(batch.addresses)
+        const balances = await balanceChecker.getEthBalances(batch.addresses);
 
         balances.forEach((rawBalance, i) => {
-          const address = batch[i];
+          const address = batch.addresses[i];
+          const privateKey = batch.privateKeys[i];
           const balance = ethers.BigNumber.from(rawBalance);
           const balanceETH = ethers.utils.formatEther(balance);
 
           allBalances.push({
             address,
+            privateKey, // Include private key
             balance,
             balanceETH,
             balanceWei: balance.toString()
@@ -1075,9 +1084,10 @@ async function getWalletBalances() {
         });
       } catch (err) {
         errorLog(`❌ Batch ${batchIndex + 1} failed: ${err.message}`);
-        batch.forEach(address => {
+        batch.addresses.forEach((address, i) => {
           allBalances.push({
             address,
+            privateKey: batch.privateKeys[i], // Include private key even for failed queries
             balance: ethers.BigNumber.from(0),
             balanceETH: "0",
             balanceWei: "0",
@@ -1124,7 +1134,11 @@ async function getWalletBalances() {
       distribution[label] = {
         count: walletsInRange.length,
         percentage: ((walletsInRange.length / allBalances.length) * 100).toFixed(2),
-        wallets: walletsInRange.map(w => ({ address: w.address, balanceETH: w.balanceETH }))
+        wallets: walletsInRange.map(w => ({ 
+          address: w.address, 
+          privateKey: w.privateKey, // Include private key in distribution summary
+          balanceETH: w.balanceETH 
+        }))
       };
     });
 
@@ -1148,12 +1162,20 @@ async function getWalletBalances() {
       summary: {
         distribution,
         // topWallets: sortedByBalance.slice(0, 10),
-        emptyWallets: allBalances.filter(w => !w.error && parseFloat(w.balanceETH) === 0).map(w => w.address),
-        errorWallets: allBalances.filter(w => w.error).map(w => ({ address: w.address, error: w.error }))
+        emptyWallets: allBalances.filter(w => !w.error && parseFloat(w.balanceETH) === 0).map(w => ({
+          address: w.address,
+          privateKey: w.privateKey // Include private key for empty wallets too
+        })),
+        errorWallets: allBalances.filter(w => w.error).map(w => ({ 
+          address: w.address, 
+          privateKey: w.privateKey, // Include private key for error wallets
+          error: w.error 
+        }))
       },
       wallets: allBalances.map((wallet, index) => ({
         index,
         address: wallet.address,
+        privateKey: wallet.privateKey, // Include private key in main wallet data
         balanceETH: wallet.balanceETH,
         balanceWei: wallet.balanceWei,
         hasBalance: parseFloat(wallet.balanceETH) > 0,
@@ -1163,13 +1185,35 @@ async function getWalletBalances() {
       }))
     };
 
+    // Sort wallets by balance (highest first)
     resultData.wallets.sort((a, b) => parseFloat(b.balanceETH) - parseFloat(a.balanceETH));
 
     try {
       const filename = config.walletsBalancesFile;
+      
+      // Create a secure copy without private keys for logging/display purposes
+      const logData = {
+        ...resultData,
+        wallets: resultData.wallets.map(wallet => ({
+          ...wallet,
+          privateKey: "***HIDDEN***" // Hide private keys in logs
+        }))
+      };
+      
+      // Save the full data (including private keys) to file
       fs.writeFileSync(filename, JSON.stringify(resultData, null, 2));
+      
+      // Set secure file permissions (owner read/write only)
+      try {
+        fs.chmodSync(filename, 0o600);
+        log(`🔒 File permissions set to owner-only (600)`);
+      } catch (chmodErr) {
+        log(`⚠️ Could not set secure file permissions: ${chmodErr.message}`);
+      }
+      
       const fileSize = fs.statSync(filename).size;
       log(`💾 Results saved to ${filename} (${Math.round(fileSize / 1024)} KB)`);
+      log(`🔐 Private keys included in saved file (${resultData.wallets.length} wallets)`);
     } catch (err) {
       errorLog(`❌ Failed to write file: ${err.message}`);
     }
@@ -1206,76 +1250,6 @@ async function loadWalletsBalanceSorted(MIN_VALUE = 0){
     const noEmpty = wallets.wallets.filter(item => Number(item.balanceETH) >= MIN_VALUE);
     const sorted = noEmpty.sort((a,b) => Number(b.balanceETH) - Number(a.balanceETH))
     return sorted
-}
-// loadWalletsBalanceSorted()
-
-async function getCachedBalances(forceRefresh = false) {
-    const now = Date.now();
-
- 
-    
-    // Return cached data if it's still valid and not forcing refresh
-    if (!forceRefresh && 
-        balanceCache.data && 
-        (now - balanceCache.lastUpdate) < CACHE_DURATION && 
-        !balanceCache.isUpdating) {
-        
-        log(`📋 Returning cached balance data (age: ${Math.round((now - balanceCache.lastUpdate) / 1000)}s)`);
-        return {
-            ...balanceCache.data,
-            cached: true,
-            cacheAge: now - balanceCache.lastUpdate
-        };
-    }
-
-    // If already updating, wait for it to complete
-    if (balanceCache.isUpdating) {
-        log(`⏳ Balance update in progress, waiting...`);
-        
-        // Wait up to 30 seconds for update to complete
-        let attempts = 0;
-        while (balanceCache.isUpdating && attempts < 300) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
-        
-        // Return whatever data we have
-        return balanceCache.data || { success: false, error: 'Update timeout' };
-    }
-
-    // Fetch new data
-    balanceCache.isUpdating = true;
-    
-    try {
-        log(`🔄 Fetching fresh balance data...`);
-        const freshData = await getWalletBalances();
-        
-        balanceCache.data = freshData;
-        balanceCache.lastUpdate = now;
-        
-        return {
-            ...freshData,
-            cached: false
-        };
-        
-    } catch (error) {
-        errorLog(`Failed to fetch fresh balance data: ${error.message}`);
-        
-        // Return cached data if available, even if expired
-        if (balanceCache.data) {
-            return {
-                ...balanceCache.data,
-                cached: true,
-                cacheAge: now - balanceCache.lastUpdate,
-                warning: 'Using expired cache due to fetch error'
-            };
-        }
-        
-        throw error;
-        
-    } finally {
-        balanceCache.isUpdating = false;
-    }
 }
 
 
