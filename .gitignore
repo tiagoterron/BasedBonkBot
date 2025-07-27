@@ -5,3 +5,4 @@ solidity
 wallets_balances.json
 app
 tokens.json
+.last_update_check

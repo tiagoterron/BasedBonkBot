@@ -2165,65 +2165,67 @@ app.get('/api/system/check-updates', async (req, res) => {
     try {
         log('🔍 Checking for available updates...');
         
-        // Try to get latest commit info from GitHub API
         let latestVersion = null;
         let currentVersion = null;
         let updateAvailable = false;
+        let comparisonMethod = 'unknown';
         
+        // Get current local version from package.json
         try {
-            // Get latest commit from GitHub
-            const githubResponse = await fetch(
-                'https://api.github.com/repos/tiagoterron/BasedBonkBot/commits/main',
-                { timeout: 10000 }
-            );
-            
-            if (githubResponse.ok) {
-                const commitData = await githubResponse.json();
-                latestVersion = {
-                    sha: commitData.sha.substring(0, 7),
-                    date: commitData.commit.author.date,
-                    message: commitData.commit.message
+            const localPackageJsonPath = path.join(__dirname, '../package.json');
+            if (fs.existsSync(localPackageJsonPath)) {
+                const localPackageJson = JSON.parse(fs.readFileSync(localPackageJsonPath, 'utf8'));
+                currentVersion = {
+                    version: localPackageJson.version || '0.0.0',
+                    name: localPackageJson.name || 'BasedBonkBot',
+                    source: 'package.json'
                 };
+                log(`📦 Current local version: ${currentVersion.version}`);
+                console.log(`📦 Current local version: ${currentVersion.version}`);
             }
-        } catch (githubError) {
-            log('Failed to check GitHub for updates:', githubError.message);
+        } catch (localError) {
+            log('Failed to read local package.json:', localError.message);
         }
 
-        // Try to get current version from local git (if available)
-        try {
-            const gitLogProcess = spawn('git', ['log', '-1', '--format=%H|%aI|%s'], {
-                cwd: __dirname,
-                stdio: ['inherit', 'pipe', 'pipe']
-            });
 
-            let gitOutput = '';
-            gitLogProcess.stdout.on('data', (data) => {
-                gitOutput += data.toString();
-            });
-
-            gitLogProcess.on('close', (code) => {
-                if (code === 0 && gitOutput.trim()) {
-                    const [sha, date, message] = gitOutput.trim().split('|');
-                    currentVersion = {
-                        sha: sha.substring(0, 7),
-                        date: date,
-                        message: message
-                    };
-                    
-                    // Compare versions
-                    if (latestVersion && currentVersion) {
-                        updateAvailable = latestVersion.sha !== currentVersion.sha;
+         try {
+            log('🌐 Fetching latest version from GitHub...');
+            
+            // Fetch package.json from GitHub (using master branch)
+            const githubPackageResponse = await fetch(
+                'https://raw.githubusercontent.com/tiagoterron/BasedBonkBot/refs/heads/master/package.json',
+                { 
+                    timeout: 10000,
+                    headers: {
+                        'User-Agent': 'BasedBonkBot-UpdateChecker'
                     }
                 }
-            });
-
-        } catch (gitError) {
-            // Git not available or not a git repo - that's okay
-            log('Git not available for version check');
+            );
+            
+            if (githubPackageResponse.ok) {
+                const githubPackageJson = await githubPackageResponse.json();
+                latestVersion = {
+                    version: githubPackageJson.version || '0.0.0',
+                    name: githubPackageJson.name || 'BasedBonkBot',
+                    source: 'github-package.json'
+                };
+                
+                log(`📦 Latest GitHub version: ${latestVersion.version}`);
+                comparisonMethod = 'package-version';
+                
+                // Compare versions using semantic versioning
+                if (currentVersion && latestVersion) {
+                    updateAvailable = compareVersions(currentVersion.version, latestVersion.version) < 0;
+                    log(`🔍 Version comparison: ${currentVersion.version} vs ${latestVersion.version} = ${updateAvailable ? 'UPDATE AVAILABLE' : 'UP TO DATE'}`);
+                }
+            } else {
+                log(`⚠️ Failed to fetch GitHub package.json: ${githubPackageResponse.status} ${githubPackageResponse.statusText}`);
+            }
+        } catch (githubError) {
+            log('Failed to fetch GitHub package.json:', githubError.message);
         }
 
-        // Check when last update check was performed
-        const lastUpdateFile = path.join(__dirname, '../.last_update_check');
+         const lastUpdateFile = path.join(__dirname, '../.last_update_check');
         let lastUpdateCheck = null;
         
         if (fs.existsSync(lastUpdateFile)) {
@@ -2241,15 +2243,21 @@ app.get('/api/system/check-updates', async (req, res) => {
             // Can't write file - ignore
         }
 
+        const updateRecommended = updateAvailable || (!currentVersion && latestVersion);
+
+        log(`✅ Update check completed: ${updateAvailable ? 'Update available' : 'Up to date'} (method: ${comparisonMethod})`);
+
         res.json({
             success: true,
             updateAvailable: updateAvailable,
+            updateRecommended: updateRecommended,
+            comparisonMethod: comparisonMethod,
             latestVersion: latestVersion,
             currentVersion: currentVersion,
             lastUpdateCheck: lastUpdateCheck,
             checkTimestamp: new Date().toISOString(),
-            updateRecommended: updateAvailable || (!currentVersion && latestVersion),
-            repository: 'https://github.com/tiagoterron/BasedBonkBot'
+            repository: 'https://github.com/tiagoterron/BasedBonkBot',
+            branch: 'master'
         });
 
     } catch (error) {
@@ -2258,10 +2266,42 @@ app.get('/api/system/check-updates', async (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Failed to check for updates',
-            details: error.message
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
+
+function compareVersions(version1, version2) {
+    // Normalize versions by removing 'v' prefix if present
+    const v1 = version1.replace(/^v/, '');
+    const v2 = version2.replace(/^v/, '');
+    
+    // Split versions into parts
+    const v1parts = v1.split('.').map(part => {
+        // Handle cases like "1.0.0-beta" by extracting the numeric part
+        const numeric = parseInt(part.split('-')[0]);
+        return isNaN(numeric) ? 0 : numeric;
+    });
+    
+    const v2parts = v2.split('.').map(part => {
+        const numeric = parseInt(part.split('-')[0]);
+        return isNaN(numeric) ? 0 : numeric;
+    });
+    
+    // Ensure both arrays have the same length by padding with zeros
+    const maxLength = Math.max(v1parts.length, v2parts.length);
+    while (v1parts.length < maxLength) v1parts.push(0);
+    while (v2parts.length < maxLength) v2parts.push(0);
+    
+    // Compare each part
+    for (let i = 0; i < maxLength; i++) {
+        if (v1parts[i] < v2parts[i]) return -1;  // v1 is older
+        if (v1parts[i] > v2parts[i]) return 1;   // v1 is newer
+    }
+    
+    return 0; // versions are equal
+}
 
 // Get update status for active update processes
 app.get('/api/system/update-status', (req, res) => {
