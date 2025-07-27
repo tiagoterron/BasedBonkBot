@@ -57,7 +57,7 @@ mkdir BasedBonkBot && cd BasedBonkBot
 wget -O install.sh "https://raw.githubusercontent.com/tiagoterron/BasedBonkBot/refs/heads/master/install.sh" && chmod +x install.sh && ./install.sh setup
 ```
 
-### 2. Install on MacOS
+### 2. Install on Windows | MacOS
 ```bash
 mkdir BasedBonkBot && cd BasedBonkBot
 curl -o install.sh "https://raw.githubusercontent.com/tiagoterron/BasedBonkBot/refs/heads/master/install.sh" && chmod +x install.sh && ./install.sh setup
