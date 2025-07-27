@@ -1954,6 +1954,349 @@ server.listen(PORT, () => {
     });
 });
 
+// Add this endpoint to your existing Express server (around line 1200 after other API endpoints)
+
+// ============================================================================
+// PROJECT UPDATE API
+// ============================================================================
+
+// Update project using install.sh script
+app.post('/api/system/update', async (req, res) => {
+    try {
+        const processId = Date.now().toString();
+        
+        log('🔄 Starting project update via API...');
+        
+        // Check if install.sh exists
+        const installScriptPath = path.join(__dirname, '../install.sh');
+        if (!fs.existsSync(installScriptPath)) {
+            return res.status(404).json({
+                success: false,
+                error: 'install.sh script not found. Please ensure the install script is present in the project root.',
+                details: 'The install.sh script is required to perform updates'
+            });
+        }
+
+        // Check if script is executable
+        try {
+            fs.accessSync(installScriptPath, fs.constants.X_OK);
+        } catch (permError) {
+            // Try to make it executable
+            try {
+                fs.chmodSync(installScriptPath, '755');
+                log('✅ Made install.sh executable');
+            } catch (chmodError) {
+                return res.status(500).json({
+                    success: false,
+                    error: 'install.sh script is not executable and cannot be made executable',
+                    details: chmodError.message
+                });
+            }
+        }
+
+        // Immediately respond to client that update has started
+        res.json({
+            success: true,
+            message: 'Project update started',
+            processId: processId,
+            status: 'in_progress',
+            timestamp: new Date().toISOString()
+        });
+
+        // Broadcast update start to WebSocket clients
+        broadcast({
+            type: 'update_started',
+            processId,
+            message: 'Project update initiated via API',
+            timestamp: new Date().toISOString()
+        });
+
+        log('🚀 Executing install.sh update command...');
+
+        // Spawn the install.sh update process
+        const updateProcess = spawn('./install.sh', ['update'], {
+            cwd: path.dirname(installScriptPath),
+            env: { ...process.env, FORCE_COLOR: '0' },
+            stdio: ['inherit', 'pipe', 'pipe']
+        });
+
+        // Store the process
+        activeProcesses.set(processId, {
+            process: updateProcess,
+            command: 'install.sh update',
+            startTime: new Date(),
+            output: '',
+            errors: ''
+        });
+
+        let fullOutput = '';
+        let hasError = false;
+
+        // Handle stdout data
+        updateProcess.stdout.on('data', (data) => {
+            const output = data.toString();
+            fullOutput += output;
+            
+            // Filter out ANSI color codes for cleaner output
+            const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
+            
+            broadcast({
+                type: 'update_output',
+                processId,
+                data: cleanOutput,
+                timestamp: new Date().toISOString(),
+                stage: 'update'
+            });
+            
+            if (activeProcesses.has(processId)) {
+                activeProcesses.get(processId).output += cleanOutput;
+            }
+        });
+
+        // Handle stderr data
+        updateProcess.stderr.on('data', (data) => {
+            const error = data.toString();
+            fullOutput += error;
+            hasError = true;
+            
+            // Filter out ANSI color codes
+            const cleanError = error.replace(/\x1b\[[0-9;]*m/g, '');
+            
+            broadcast({
+                type: 'update_error',
+                processId,
+                data: cleanError,
+                timestamp: new Date().toISOString(),
+                stage: 'update'
+            });
+            
+            if (activeProcesses.has(processId)) {
+                activeProcesses.get(processId).errors += cleanError;
+            }
+        });
+
+        // Handle process completion
+        updateProcess.on('close', (code) => {
+            const success = code === 0 && !hasError;
+            
+            if (success) {
+                log('✅ Project update completed successfully via API');
+                
+                broadcast({
+                    type: 'update_complete',
+                    processId,
+                    success: true,
+                    exitCode: code,
+                    message: 'Project updated successfully! Server may restart automatically.',
+                    timestamp: new Date().toISOString(),
+                    stage: 'complete'
+                });
+
+                // Optional: Restart server after successful update
+                // Uncomment the following lines if you want automatic restart
+                /*
+                setTimeout(() => {
+                    log('🔄 Restarting server after successful update...');
+                    process.exit(0);
+                }, 3000);
+                */
+                
+            } else {
+                log(`Project update failed with exit code: ${code}`);
+                
+                broadcast({
+                    type: 'update_failed',
+                    processId,
+                    success: false,
+                    exitCode: code,
+                    message: `Update failed with exit code ${code}. Check logs for details.`,
+                    timestamp: new Date().toISOString(),
+                    stage: 'failed'
+                });
+            }
+            
+            activeProcesses.delete(processId);
+        });
+
+        // Handle process errors
+        updateProcess.on('error', (error) => {
+            log('Update process error:', error);
+            
+            broadcast({
+                type: 'update_process_error',
+                processId,
+                error: error.message,
+                timestamp: new Date().toISOString(),
+                stage: 'error'
+            });
+            
+            activeProcesses.delete(processId);
+        });
+
+        // Set timeout for long-running updates
+        setTimeout(() => {
+            if (activeProcesses.has(processId)) {
+                log(`Update process ${processId} still running after 10 minutes, continuing...`);
+                
+                broadcast({
+                    type: 'update_long_running',
+                    processId,
+                    message: 'Update is still running (10+ minutes). This is normal for large updates.',
+                    timestamp: new Date().toISOString(),
+                    stage: 'running'
+                });
+
+            }
+        }, 600000); // 10 minutes
+
+    } catch (error) {
+        log('Update API error:', error);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to start project update',
+            details: error.message
+        });
+    }
+});
+
+// Check for available updates (optional - checks GitHub for newer version)
+app.get('/api/system/check-updates', async (req, res) => {
+    try {
+        log('🔍 Checking for available updates...');
+        
+        // Try to get latest commit info from GitHub API
+        let latestVersion = null;
+        let currentVersion = null;
+        let updateAvailable = false;
+        
+        try {
+            // Get latest commit from GitHub
+            const githubResponse = await fetch(
+                'https://api.github.com/repos/tiagoterron/BasedBonkBot/commits/main',
+                { timeout: 10000 }
+            );
+            
+            if (githubResponse.ok) {
+                const commitData = await githubResponse.json();
+                latestVersion = {
+                    sha: commitData.sha.substring(0, 7),
+                    date: commitData.commit.author.date,
+                    message: commitData.commit.message
+                };
+            }
+        } catch (githubError) {
+            log('Failed to check GitHub for updates:', githubError.message);
+        }
+
+        // Try to get current version from local git (if available)
+        try {
+            const gitLogProcess = spawn('git', ['log', '-1', '--format=%H|%aI|%s'], {
+                cwd: __dirname,
+                stdio: ['inherit', 'pipe', 'pipe']
+            });
+
+            let gitOutput = '';
+            gitLogProcess.stdout.on('data', (data) => {
+                gitOutput += data.toString();
+            });
+
+            gitLogProcess.on('close', (code) => {
+                if (code === 0 && gitOutput.trim()) {
+                    const [sha, date, message] = gitOutput.trim().split('|');
+                    currentVersion = {
+                        sha: sha.substring(0, 7),
+                        date: date,
+                        message: message
+                    };
+                    
+                    // Compare versions
+                    if (latestVersion && currentVersion) {
+                        updateAvailable = latestVersion.sha !== currentVersion.sha;
+                    }
+                }
+            });
+
+        } catch (gitError) {
+            // Git not available or not a git repo - that's okay
+            log('Git not available for version check');
+        }
+
+        // Check when last update check was performed
+        const lastUpdateFile = path.join(__dirname, '../.last_update_check');
+        let lastUpdateCheck = null;
+        
+        if (fs.existsSync(lastUpdateFile)) {
+            try {
+                lastUpdateCheck = fs.readFileSync(lastUpdateFile, 'utf8').trim();
+            } catch (readError) {
+                // File exists but can't read - ignore
+            }
+        }
+
+        // Update last check timestamp
+        try {
+            fs.writeFileSync(lastUpdateFile, new Date().toISOString());
+        } catch (writeError) {
+            // Can't write file - ignore
+        }
+
+        res.json({
+            success: true,
+            updateAvailable: updateAvailable,
+            latestVersion: latestVersion,
+            currentVersion: currentVersion,
+            lastUpdateCheck: lastUpdateCheck,
+            checkTimestamp: new Date().toISOString(),
+            updateRecommended: updateAvailable || (!currentVersion && latestVersion),
+            repository: 'https://github.com/tiagoterron/BasedBonkBot'
+        });
+
+    } catch (error) {
+        log('Check updates API error:', error);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to check for updates',
+            details: error.message
+        });
+    }
+});
+
+// Get update status for active update processes
+app.get('/api/system/update-status', (req, res) => {
+    try {
+        const updateProcesses = Array.from(activeProcesses.entries())
+            .filter(([id, info]) => info.command.includes('install.sh'))
+            .map(([id, info]) => ({
+                processId: id,
+                command: info.command,
+                startTime: info.startTime,
+                duration: Date.now() - info.startTime.getTime(),
+                outputLength: info.output.length,
+                errorLength: info.errors.length,
+                isRunning: true
+            }));
+
+        res.json({
+            success: true,
+            activeUpdates: updateProcesses.length,
+            processes: updateProcesses,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        log('Update status API error:', error);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get update status',
+            details: error.message
+        });
+    }
+});
+
+
 module.exports = {
     app
 }
