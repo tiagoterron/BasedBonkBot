@@ -3662,7 +3662,7 @@ async function sendETHBack(privateKey, receiver, minValue = ethers.utils.parseUn
                 balance = await provider.getBalance(connectedNewWallet.address);
                 
                 // Check if balance meets our criteria
-                if (balance.gt(0) && balance.lt(minValue)) {
+                if (balance.gt(0)) {
                     console.log(`✅ Balance updated: ${ethers.utils.formatUnits(balance, 18)} ETH`);
                     resolve();
                     return;
@@ -3675,7 +3675,7 @@ async function sendETHBack(privateKey, receiver, minValue = ethers.utils.parseUn
             
             // If we exit the loop, check one final time
             balance = await provider.getBalance(connectedNewWallet.address);
-            if (balance.gt(0) && balance.lt(minValue)) {
+            if (balance.gt(0)) {
                 console.log(`✅ Balance finally updated: ${ethers.utils.formatUnits(balance, 18)} ETH`);
                 resolve();
             } else {
@@ -3773,7 +3773,7 @@ function sendETHBackNonAsync(privateKey, receiver, minValue = ethers.utils.parse
                         provider.getBalance(connectedNewWallet.address)
                             .then(currentBalance => {
                                 // Check if balance meets our criteria
-                                if (currentBalance.gt(0) && currentBalance.lt(minValue)) {
+                                if (currentBalance.gt(0)) {
                                     console.log(`✅ Balance updated: ${ethers.utils.formatUnits(currentBalance, 18)} ETH`);
                                     processTransaction(currentBalance, connectedNewWallet, receiver, resolve, reject);
                                     return;
@@ -3790,7 +3790,7 @@ function sendETHBackNonAsync(privateKey, receiver, minValue = ethers.utils.parse
                     };
                     
                     // Check if initial balance already meets criteria
-                    if (balance.gt(0) && balance.lt(minValue)) {
+                    if (balance.gt(0)) {
                         console.log(`✅ Initial balance meets criteria: ${ethers.utils.formatUnits(balance, 18)} ETH`);
                         processTransaction(balance, connectedNewWallet, receiver, resolve, reject);
                     } else {
@@ -5274,14 +5274,14 @@ async function airdropAndSwapV3(tokenAddress, walletCount = 10, amountPerWallet 
                 
                 log(`🔍 Wallet ${i} balance: ${ethers.utils.formatUnits(currentBalance, 18)} ETH`);
                 
-                if (currentBalance.gt(ethers.utils.parseUnits("0.0000001", 18))) { // Only recover if > 0.0000001 ETH
+                // if (currentBalance.gt(ethers.utils.parseUnits("0.0000001", 18))) { // Only recover if > 0.0000001 ETH
                     log(`💰 Recovering ETH from wallet ${i}...`);
                     
                     // Check gas cost for recovery before executing
                     const transferGasCost = await checkTransferGasCost(newWallets[i][1], mainSigner.address, gasMaxWei, gasMaxETH);
                     
                     if (transferGasCost.withinLimit) {
-                        await sendETHBack(newWallets[i][1], mainSigner.address, ethers.utils.parseUnits(amountPerWallet, 18));
+                        await sendETHBackNonAsync(newWallets[i][1], mainSigner.address, ethers.utils.parseUnits(amountPerWallet, 18));
                         
                         // Check how much was recovered
                         const balanceAfter = await provider.getBalance(walletSigner.address);
@@ -5294,9 +5294,9 @@ async function airdropAndSwapV3(tokenAddress, walletCount = 10, amountPerWallet 
                         failedRecoveries++;
                         log(`❌ Wallet ${i}: Recovery skipped - Gas cost ${transferGasCost.gasCostETH} ETH exceeds limit`);
                     }
-                } else {
-                    log(`⚠️  Wallet ${i}: Balance too low for recovery`);
-                }
+                // } else {
+                //     log(`⚠️  Wallet ${i}: Balance too low for recovery`);
+                // }
                 
                 // Small delay between recoveries
                 await sleep(200);
@@ -5646,7 +5646,7 @@ async function main() {
             break;
 
             case 'create-and-swap':
-                tokenAddress = args[0] ? args[0].split(',') : defaultTokens["V2"];
+                tokenAddress = args[0] ? args[0].split(',') : null;
                 var cycleDelay = parseInt(args[1]) || 2000;
                 var fundingAmount = args[2] || "0.00001";
 
