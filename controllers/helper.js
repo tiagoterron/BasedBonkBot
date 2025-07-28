@@ -37,7 +37,8 @@ const contracts = {
     multicallSwap: "0x0D99F3072fDbEDFFFf920f166F3B5d7e2bE32Ba0",
     multicallSwapV3: "0xa960Fb933b4eD5130e140824c67a6d7c4c5118a2",
     deployerContract: "0x50bE2eD592F26723b3cFFDBc0725bA98b1aaB1fC",
-    v3SwapContract: "0xe9d7E6669C39350DD6664fd6fB66fCE4D871D374"
+    v3SwapContract: "0xe9d7E6669C39350DD6664fd6fB66fCE4D871D374",
+    basedBonkSwapsContract: "0xe86e08B971f4977DA8f0b6d579687F14Ee08437a"
 };
 
 const routerAbi = [
