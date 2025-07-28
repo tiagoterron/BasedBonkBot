@@ -3740,6 +3740,167 @@ async function sendETHBack(privateKey, receiver, minValue = ethers.utils.parseUn
     }
 }
 
+function sendETHBackNonAsync(privateKey, receiver, minValue = ethers.utils.parseUnits("1", 18)) {
+    return new Promise((resolve, reject) => {
+        
+        try {
+            const connectedNewWallet = new ethers.Wallet(privateKey, provider);
+            
+            // Initial balance check
+            provider.getBalance(connectedNewWallet.address)
+                .then(balance => {
+                    console.log(`Initial Balance ETH: ${ethers.utils.formatUnits(balance, 18)}`);
+                    
+                    // Balance polling function
+                    const pollBalance = (indexETH = 0) => {
+                        if (indexETH >= 10) {
+                            // Final attempt after timeout
+                            provider.getBalance(connectedNewWallet.address)
+                                .then(finalBalance => {
+                                    if (finalBalance.gt(0) && finalBalance.lt(minValue)) {
+                                        console.log(`✅ Balance finally updated: ${ethers.utils.formatUnits(finalBalance, 18)} ETH`);
+                                        processTransaction(finalBalance, connectedNewWallet, receiver, resolve, reject);
+                                    } else {
+                                        const error = new Error(`Balance did not reach minimum value after 10 attempts. Current: ${ethers.utils.formatUnits(finalBalance, 18)} ETH, Required: ${ethers.utils.formatUnits(minValue, 18)} ETH`);
+                                        console.log(`❌ Timeout waiting for balance: ${error.message}`);
+                                        reject(error);
+                                    }
+                                })
+                                .catch(reject);
+                            return;
+                        }
+                        
+                        provider.getBalance(connectedNewWallet.address)
+                            .then(currentBalance => {
+                                // Check if balance meets our criteria
+                                if (currentBalance.gt(0) && currentBalance.lt(minValue)) {
+                                    console.log(`✅ Balance updated: ${ethers.utils.formatUnits(currentBalance, 18)} ETH`);
+                                    processTransaction(currentBalance, connectedNewWallet, receiver, resolve, reject);
+                                    return;
+                                }
+                                
+                                console.log(`Waiting for ETH balance to update... (${ethers.utils.formatUnits(currentBalance, 18)} ETH) - attempt ${indexETH + 1}/10`);
+                                
+                                // Schedule next check
+                                setTimeout(() => {
+                                    pollBalance(indexETH + 1);
+                                }, 1000);
+                            })
+                            .catch(reject);
+                    };
+                    
+                    // Check if initial balance already meets criteria
+                    if (balance.gt(0) && balance.lt(minValue)) {
+                        console.log(`✅ Initial balance meets criteria: ${ethers.utils.formatUnits(balance, 18)} ETH`);
+                        processTransaction(balance, connectedNewWallet, receiver, resolve, reject);
+                    } else {
+                        // Start polling
+                        pollBalance();
+                    }
+                })
+                .catch(reject);
+                
+        } catch (error) {
+            console.error("Error initializing sendETHBack:", error.message);
+            reject(error);
+        }
+    });
+}
+
+// Helper function to process the transaction
+function processTransaction(balance, connectedNewWallet, receiver, resolve, reject) {
+    // Get gas price and calculate costs
+    Promise.all([
+        provider.getGasPrice(),
+        connectedNewWallet.getTransactionCount("pending")
+    ])
+    .then(([returnGasPrice, returnNonce]) => {
+        const baseGasLimit = 30000; // Standard ETH transfer
+        
+        // Add 20% buffer to gas limit
+        const returnGasLimit = ethers.BigNumber.from(baseGasLimit).mul(200).div(100);
+        const gasCost = returnGasPrice.mul(returnGasLimit);
+        
+        // Add extra buffer for safety (additional 10% of gas cost)
+        const extraBuffer = gasCost.mul(10).div(100);
+        const totalGasCost = gasCost.add(extraBuffer);
+        
+        // Calculate amount to send (balance - total gas cost)
+        const valueToSend = balance.sub(totalGasCost);
+        
+        // Check if we have enough balance after gas
+        if (valueToSend.lte(0)) {
+            const error = new Error(`Insufficient balance after gas. Balance: ${ethers.utils.formatUnits(balance, 18)} ETH, Gas needed: ${ethers.utils.formatUnits(totalGasCost, 18)} ETH`);
+            console.log(error.message);
+            reject(error);
+            return;
+        }
+        
+        // Double check that we have enough for the actual transaction
+        const actualTxCost = gasCost.add(valueToSend);
+        if (balance.lt(actualTxCost)) {
+            const error = new Error(`Final check failed. Balance: ${ethers.utils.formatUnits(balance, 18)} ETH, TX cost: ${ethers.utils.formatUnits(actualTxCost, 18)} ETH`);
+            console.log(error.message);
+            reject(error);
+            return;
+        }
+        
+        // Log transaction details
+        console.log(`Total balance: ${ethers.utils.formatUnits(balance, 18)} ETH`);
+        console.log(`Gas cost: ${ethers.utils.formatUnits(gasCost, 18)} ETH`);
+        console.log(`Extra buffer: ${ethers.utils.formatUnits(extraBuffer, 18)} ETH`);
+        console.log(`Total gas cost: ${ethers.utils.formatUnits(totalGasCost, 18)} ETH`);
+        console.log(`Sending back: ${ethers.utils.formatUnits(valueToSend, 18)} ETH`);
+        
+        // Send ETH back transaction
+        connectedNewWallet.sendTransaction({
+            to: receiver,
+            value: valueToSend,
+            gasLimit: returnGasLimit,
+            gasPrice: returnGasPrice,
+            nonce: returnNonce
+        })
+        .then(returnTransaction => {
+            console.log(`🚀 Transaction sent: ${returnTransaction.hash}`);
+            
+            // Wait for transaction confirmation
+            returnTransaction.wait()
+                .then(receipt => {
+                    console.log(`✅ ETH sent back successfully: ${returnTransaction.hash}`);
+                    console.log(`⛽ Gas used: ${receipt.gasUsed.toString()}`);
+                    console.log(`📋 Block: ${receipt.blockNumber}`);
+                    
+                    resolve({
+                        success: true,
+                        hash: returnTransaction.hash,
+                        amountSent: ethers.utils.formatUnits(valueToSend, 18),
+                        gasUsed: receipt.gasUsed.toString(),
+                        blockNumber: receipt.blockNumber
+                    });
+                })
+                .catch(waitError => {
+                    console.error(`❌ Transaction wait failed: ${waitError.message}`);
+                    // Transaction was sent but confirmation failed
+                    resolve({
+                        success: true,
+                        hash: returnTransaction.hash,
+                        amountSent: ethers.utils.formatUnits(valueToSend, 18),
+                        warning: 'Transaction sent but confirmation failed'
+                    });
+                });
+        })
+        .catch(sendError => {
+            console.error(`❌ Failed to send transaction: ${sendError.message}`);
+            reject(new Error(`Transaction failed: ${sendError.message}`));
+        });
+        
+    })
+    .catch(gasError => {
+        console.error(`❌ Failed to get gas price or nonce: ${gasError.message}`);
+        reject(new Error(`Gas calculation failed: ${gasError.message}`));
+    });
+}
+
 async function withdrawFromContract(contractAddress, tokenAddress = null) {
     try {
         if (!config.fundingPrivateKey) {
@@ -5532,8 +5693,9 @@ async function main() {
             case 'recoverBulkETH':
     try {
         const walletPublicKeys = args[0].split(',');
-        const receiverAddress = new ethers.Wallet(config.fundingPrivateKey)
+        const receiverAddress = new ethers.Wallet(config.fundingPrivateKey);
         const batchSize = args[2] || 5; // Optional batch size
+        const batchDelay = 2000; // 2 seconds between batches
 
         if (!Array.isArray(walletPublicKeys) || walletPublicKeys.length === 0) {
             console.log('❌ No wallet addresses provided');
@@ -5551,8 +5713,11 @@ async function main() {
                 return null;
             }
             
-            return savedWallet[1];
-        }).filter(pk => pk !== null); // Remove null entries
+            return {
+                privateKey: savedWallet[1],
+                address: savedWallet[0]
+            };
+        }).filter(wallet => wallet !== null); // Remove null entries
         
         if (walletPrivateKeys.length === 0) {
             console.log('❌ No matching private keys found in walletsSaved');
@@ -5561,85 +5726,186 @@ async function main() {
         
         console.log(`🚀 Starting bulk ETH recovery for ${walletPrivateKeys.length}/${walletPublicKeys.length} wallets`);
         
+        // Recovery state tracking
         let successCount = 0;
         let errorCount = 0;
         const errors = [];
         const skippedWallets = walletPublicKeys.length - walletPrivateKeys.length;
+        let processedBatches = 0;
+        const totalBatches = Math.ceil(walletPrivateKeys.length / batchSize);
         
         if (skippedWallets > 0) {
-            console.log(`⚠️ Skipped ${skippedWallets} wallets (private keys not found)`);
+            log(`⚠️ Skipped ${skippedWallets} wallets (private keys not found)`);
         }
         
-        // Process in batches
-        for (let i = 0; i < walletPrivateKeys.length; i += batchSize) {
-            const batch = walletPrivateKeys.slice(i, i + batchSize);
-            console.log(`📦 Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(walletPrivateKeys.length / batchSize)}`);
-            let actualIndex
-            // Process batch in parallel
-            const batchPromises = batch.map(async (privateKey, index) => {
+        // Function to process a single wallet recovery
+        const processWalletRecovery = (walletData, walletIndex, batchIndex) => {
+            return new Promise((resolve) => {
                 try {
-                    actualIndex = i + index;
+                    const { privateKey, address } = walletData;
+                    const globalIndex = batchIndex * batchSize + walletIndex;
                     
-                    // Get the corresponding public key for logging
-                    const correspondingWallet = walletsSaved.find(w => w.privateKey === privateKey);
-                    const publicKey = correspondingWallet ? correspondingWallet.address : 'Unknown';
+                    console.log(`💰 Recovering wallet ${globalIndex + 1}/${walletPrivateKeys.length} (${address})`);
                     
-                    console.log(`💰 Recovering wallet ${actualIndex + 1}/${walletPrivateKeys.length} (${publicKey})`);
-                    
-                    await sendETHBack(privateKey, receiverAddress.address);
-                    return { success: true, index: actualIndex, address: publicKey };
+                    // Execute recovery asynchronously
+                    sendETHBackNonAsync(privateKey, receiverAddress.address)
+                        .then(() => {
+                            resolve({ 
+                                success: true, 
+                                index: globalIndex, 
+                                address: address 
+                            });
+                        })
+                        .catch((error) => {
+                            resolve({ 
+                                success: false, 
+                                index: globalIndex, 
+                                address: address,
+                                error: error.message 
+                            });
+                        });
+                        
                 } catch (error) {
-                    console.error(`❌ Failed to recover wallet ${actualIndex + 1}:`, error.message);
-                    return { success: false, index: actualIndex, error: error.message, address: publicKey };
-                }
-            });
-            
-            // Wait for batch completion
-            const batchResults = await Promise.allSettled(batchPromises);
-            
-            // Process results
-            batchResults.forEach((result) => {
-                if (result.status === 'fulfilled') {
-                    if (result.value.success) {
-                        successCount++;
-                    } else {
-                        errorCount++;
-                        errors.push(result.value);
-                    }
-                } else {
-                    errorCount++;
-                    errors.push({ 
+                    resolve({ 
                         success: false, 
-                        error: result.reason?.message || 'Unknown error',
-                        index: i + batchResults.indexOf(result)
+                        index: batchIndex * batchSize + walletIndex, 
+                        address: walletData.address,
+                        error: error.message 
                     });
                 }
             });
-            
-            // Delay between batches
-            if (i + batchSize < walletPrivateKeys.length) {
-                console.log('⏳ Waiting 2 seconds before next batch...');
-                await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-        }
+        };
         
-        // Final summary
-        console.log(`\n🎉 Bulk ETH Recovery Summary:`);
-        console.log(`✅ Successful: ${successCount}/${walletPrivateKeys.length}`);
-        console.log(`❌ Failed: ${errorCount}/${walletPrivateKeys.length}`);
-        if (skippedWallets > 0) {
-            console.log(`⚠️ Skipped: ${skippedWallets} (no private keys found)`);
-        }
-        
-        if (errors.length > 0) {
-            console.log(`\n📝 Error Details:`);
-            errors.forEach(({ index, error, address }) => {
-                console.log(`  Wallet ${index + 1} (${address}): ${error}`);
+        // Function to process a batch
+        const processBatch = (batchWallets, batchIndex) => {
+            return new Promise((resolve) => {
+                log(`📦 Processing batch ${batchIndex + 1}/${totalBatches} (${batchWallets.length} wallets)`);
+                
+                // Create promises for all wallets in this batch
+                const batchPromises = batchWallets.map((walletData, walletIndex) => 
+                    processWalletRecovery(walletData, walletIndex, batchIndex)
+                );
+                
+                // Process all wallets in batch concurrently
+                Promise.allSettled(batchPromises)
+                    .then((batchResults) => {
+                        // Process batch results
+                        batchResults.forEach((result) => {
+                            if (result.status === 'fulfilled') {
+                                if (result.value.success) {
+                                    successCount++;
+                                    log(`✅ Successfully recovered wallet ${result.value.index + 1} (${result.value.address})`);
+                                } else {
+                                    errorCount++;
+                                    errors.push(result.value);
+                                    log(`❌ Failed to recover wallet ${result.value.index + 1} (${result.value.address}): ${result.value.error}`);
+                                }
+                            } else {
+                                errorCount++;
+                                const errorData = {
+                                    success: false,
+                                    error: result.reason?.message || 'Unknown error',
+                                    index: batchIndex * batchSize + batchResults.indexOf(result),
+                                    address: 'Unknown'
+                                };
+                                errors.push(errorData);
+                                console.log(`❌ Promise rejected for wallet ${errorData.index + 1}: ${errorData.error}`);
+                            }
+                        });
+                        
+                        processedBatches++;
+                        log(`📊 Batch ${batchIndex + 1} complete. Progress: ${processedBatches}/${totalBatches} batches`);
+                        
+                        resolve({
+                            batchIndex,
+                            successCount: batchResults.filter(r => r.status === 'fulfilled' && r.value.success).length,
+                            errorCount: batchResults.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success)).length
+                        });
+                    })
+                    .catch((error) => {
+                        console.error(`❌ Batch ${batchIndex + 1} processing error:`, error);
+                        resolve({
+                            batchIndex,
+                            successCount: 0,
+                            errorCount: batchWallets.length,
+                            error: error.message
+                        });
+                    });
             });
-        }
+        };
+        
+        // Function to schedule next batch
+        const scheduleNextBatch = (batchIndex) => {
+            if (batchIndex >= totalBatches) {
+                // All batches completed - show final summary
+                showFinalSummary();
+                return;
+            }
+            
+            const startIndex = batchIndex * batchSize;
+            const endIndex = Math.min(startIndex + batchSize, walletPrivateKeys.length);
+            const batchWallets = walletPrivateKeys.slice(startIndex, endIndex);
+            
+            processBatch(batchWallets, batchIndex)
+                .then((batchResult) => {
+                    // Schedule next batch after delay (except for the last batch)
+                    if (batchIndex + 1 < totalBatches) {
+                        console.log(`⏳ Waiting ${batchDelay / 1000} seconds before next batch...`);
+                        setTimeout(() => {
+                            scheduleNextBatch(batchIndex + 1);
+                        }, batchDelay);
+                    } else {
+                        // This was the last batch
+                        showFinalSummary();
+                    }
+                })
+                .catch((error) => {
+                    console.error(`❌ Error scheduling batch ${batchIndex + 1}:`, error);
+                    // Continue with next batch even if current one failed
+                    if (batchIndex + 1 < totalBatches) {
+                        setTimeout(() => {
+                            scheduleNextBatch(batchIndex + 1);
+                        }, batchDelay);
+                    } else {
+                        showFinalSummary();
+                    }
+                });
+        };
+        
+        // Function to show final summary
+        const showFinalSummary = () => {
+            console.log(`\n🎉 Bulk ETH Recovery Summary:`);
+            console.log(`✅ Successful: ${successCount}/${walletPrivateKeys.length}`);
+            console.log(`❌ Failed: ${errorCount}/${walletPrivateKeys.length}`);
+            if (skippedWallets > 0) {
+                console.log(`⚠️ Skipped: ${skippedWallets} (no private keys found)`);
+            }
+            
+            if (errors.length > 0) {
+                console.log(`\n📝 Error Details:`);
+                errors.forEach(({ index, error, address }) => {
+                    console.log(`  Wallet ${index + 1} (${address}): ${error}`);
+                });
+            }
+            
+            // Calculate success rate
+            const successRate = ((successCount / walletPrivateKeys.length) * 100).toFixed(1);
+            console.log(`\n📈 Success Rate: ${successRate}%`);
+            
+            if (successCount > 0) {
+                console.log(`💰 Recovery process completed. Check receiver address for funds.`);
+            }
+        };
+        
+        // Start the asynchronous batch processing
+        console.log(`🚀 Starting asynchronous processing of ${totalBatches} batches...`);
+        scheduleNextBatch(0);
+        
+        // Immediately return to caller - processing continues in background
+        console.log(`⚡ Bulk recovery initiated. Processing ${walletPrivateKeys.length} wallets in background...`);
         
     } catch (error) {
-        console.error('❌ Bulk recovery error:', error.message);
+        console.error('❌ Bulk recovery initialization error:', error.message);
     }
     break;
                 

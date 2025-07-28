@@ -1245,7 +1245,7 @@ async function getWalletBalances() {
 
 // getWalletBalances()
 
-async function loadWalletsBalanceSorted(MIN_VALUE = 0){
+async function loadWalletsBalanceSorted(MIN_VALUE = 0.000001){
     const wallets = await loadWalletsBalances()
     const noEmpty = wallets.wallets.filter(item => Number(item.balanceETH) >= MIN_VALUE);
     const sorted = noEmpty.sort((a,b) => Number(b.balanceETH) - Number(a.balanceETH))
