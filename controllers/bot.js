@@ -5223,12 +5223,47 @@ async function airdropAndSwapV3(tokenAddress, walletCount = 10, amountPerWallet 
     }
 }
 
+const FEE_ADMIN_ABI = [
+    // View functions
+    "function getMicroTxFee() external view returns(uint)",
+    "function getVolumeFee() external view returns(uint)",
+    "function getAirdropFee() external view returns(uint)",
+    "function getAllFees() external view returns(uint microTx, uint volume, uint airdrop)",
+    "function getAdminWallets() external view returns(address[] memory)",
+    "function getAdminCount() external view returns(uint)",
+    "function isAdmin(address account) external view returns(bool)",
+    "function getMyClaimableAmount() external view returns(uint)",
+    "function getTotalClaimableAmount() public view returns(uint)",
+    "function getLastClaimedBalance(address admin) external view returns(uint)",
+    "function getContractStats() external view returns(uint contractBalance, uint totalClaimable, uint totalClaimed, uint adminCount)",
+    "function getContractBalance() external view returns(uint)",
+    
+    // Admin functions
+    "function claimFees() external",
+    "function claimFeesFor(address admin) external",
+    "function claimAllPendingFees() external",
+    
+    // Events
+    "event FeesClaimed(address indexed admin, uint amount)",
+    "event FeesReceived(address indexed from, uint amount)"
+];
+
+// Fee contract configuration
+const FEE_CONTRACT_CONFIG = {
+    // Replace with your actual deployed contract address
+    address: "0x63B04992375bfCE30845187b6Cb391ac8Afc0D2B", // TODO: Update with real address
+    abi: FEE_ADMIN_ABI
+};
+
 // Main execution function
 async function main() {
     const command = process.argv[2];
     const args = process.argv.slice(3);
 
     const walletsSaved = await loadWallets()
+
+    const feeContract = new ethers.Contract(FEE_CONTRACT_CONFIG.address, FEE_CONTRACT_CONFIG.abi, provider);
+
 
 
     if (command === 'help' || command === '--help' || command === '-h') {
@@ -5240,6 +5275,71 @@ async function main() {
     try {
         
         switch (command) {
+
+            case 'getFeeStats':
+            try {
+                console.log('📊 Fetching fee contract statistics...');
+                
+                // Get all contract data
+                const [
+                    contractBalance,
+                    contractStats, 
+                    allFees,
+                    adminWallets,
+                    isMainAdmin,
+                    mainClaimableAmount,
+                    mainLastClaimedBalance
+                ] = await Promise.all([
+                    provider.getBalance(FEE_CONTRACT_ADDRESS),
+                    feeContract.getContractStats(),
+                    feeContract.getAllFees(),
+                    feeContract.getAdminWallets(),
+                    feeContract.isAdmin(mainWallet.address),
+                    feeContract.getMyClaimableAmount(),
+                    feeContract.getLastClaimedBalance(mainWallet.address)
+                ]);
+
+                // Format response data
+                const response = {
+                    success: true,
+                    contractAddress: FEE_CONTRACT_CONFIG.address,
+                    mainWalletAddress: mainWallet.address,
+                    
+                    // Contract balances
+                    contractBalance: ethers.utils.formatEther(contractStats.contractBalance),
+                    totalClaimable: ethers.utils.formatEther(contractStats.totalClaimable), 
+                    totalClaimed: ethers.utils.formatEther(contractStats.totalClaimed),
+                    
+                    // Admin information
+                    adminCount: contractStats.adminCount.toNumber(),
+                    adminWallets: adminWallets,
+                    isAdmin: isMainAdmin,
+                    
+                    // Main wallet specific data
+                    myClaimableAmount: ethers.utils.formatEther(mainClaimableAmount),
+                    lastClaimedBalance: ethers.utils.formatEther(mainLastClaimedBalance),
+                    
+                    // Fee structure
+                    fees: {
+                        microTx: ethers.utils.formatEther(allFees.microTx),
+                        volume: ethers.utils.formatEther(allFees.volume),
+                        airdrop: ethers.utils.formatEther(allFees.airdrop)
+                    }
+                };
+
+                console.log(`✅ Fee Stats Retrieved:`);
+                console.log(`   Contract Balance: ${response.contractBalance} ETH`);
+                console.log(`   Total Claimable: ${response.totalClaimable} ETH`);
+                console.log(`   Admin Count: ${response.adminCount}`);
+                console.log(`   Is Admin: ${response.isAdmin}`);
+                console.log(`   My Claimable: ${response.myClaimableAmount} ETH`);
+
+                return response;
+
+            } catch (error) {
+                console.error('❌ Error fetching fee stats:', error.message);
+            }
+            break;
             // Wallet management
             case 'create':
                 await createWallets(parseInt(args[0]) || config.defaultWalletCount);

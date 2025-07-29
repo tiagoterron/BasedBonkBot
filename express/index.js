@@ -155,6 +155,348 @@ function broadcast(message) {
     });
 }
 
+
+const FEE_ADMIN_ABI = [
+    // View functions
+    "function getMicroTxFee() external view returns(uint)",
+    "function getVolumeFee() external view returns(uint)",
+    "function getAirdropFee() external view returns(uint)",
+    "function getAllFees() external view returns(uint microTx, uint volume, uint airdrop)",
+    "function getAdminWallets() external view returns(address[] memory)",
+    "function getAdminCount() external view returns(uint)",
+    "function isAdmin(address account) external view returns(bool)",
+    "function getMyClaimableAmount() external view returns(uint)",
+    "function getTotalClaimableAmount() public view returns(uint)",
+    "function getLastClaimedBalance(address admin) external view returns(uint)",
+    "function getContractStats() external view returns(uint contractBalance, uint totalClaimable, uint totalClaimed, uint adminCount)",
+    "function getContractBalance() external view returns(uint)",
+    
+    // Admin functions
+    "function claimFees() external",
+    "function claimFeesFor(address admin) external",
+    "function claimAllPendingFees() external",
+    
+    // Events
+    "event FeesClaimed(address indexed admin, uint amount)",
+    "event FeesReceived(address indexed from, uint amount)"
+];
+
+// Fee contract configuration
+const FEE_CONTRACT_CONFIG = {
+    // Replace with your actual deployed contract address
+    address: "0x63B04992375bfCE30845187b6Cb391ac8Afc0D2B", // TODO: Update with real address
+    abi: FEE_ADMIN_ABI
+};
+
+
+app.get('/api/fees/stats', async (req, res) => {
+    try {
+        // Initialize fee contract
+        const feeContract = new ethers.Contract(
+            FEE_CONTRACT_CONFIG.address,
+            FEE_CONTRACT_CONFIG.abi,
+            provider
+        );
+
+        // Get main wallet address for admin check
+        let mainWalletAddress = null;
+        let isMainWalletAdmin = false;
+        
+        if (config.fundingPrivateKey) {
+            const mainWallet = new ethers.Wallet(config.fundingPrivateKey, provider);
+            mainWalletAddress = mainWallet.address;
+        }
+
+        log('📊 Fetching fee contract statistics...');
+
+        // Fetch all contract data in parallel for better performance
+        const [
+            contractBalance,
+            contractStats,
+            allFees,
+            adminWallets,
+            adminCount,
+            totalClaimable,
+            isMainAdmin,
+            mainClaimableAmount,
+            mainLastClaimedBalance,
+            ethPriceData
+        ] = await Promise.all([
+            provider.getBalance(FEE_CONTRACT_CONFIG.address),
+            feeContract.getContractStats(),
+            feeContract.getAllFees(),
+            feeContract.getAdminWallets(),
+            feeContract.getAdminCount(),
+            feeContract.getTotalClaimableAmount(),
+            mainWalletAddress ? feeContract.isAdmin(mainWalletAddress) : Promise.resolve(false),
+            mainWalletAddress ? feeContract.getMyClaimableAmount() : Promise.resolve(ethers.BigNumber.from(0)),
+            mainWalletAddress ? feeContract.getLastClaimedBalance(mainWalletAddress) : Promise.resolve(ethers.BigNumber.from(0)),
+            calculateGasPrices() // Get ETH price for USD calculations
+        ]);
+
+        // Format the response data
+        const response = {
+            success: true,
+            timestamp: new Date().toISOString(),
+            contractAddress: FEE_CONTRACT_CONFIG.address,
+            mainWalletAddress: mainWalletAddress,
+            
+            // Contract balances (using contractStats for consistency)
+            contractBalance: ethers.utils.formatEther(contractStats.contractBalance),
+            totalClaimable: ethers.utils.formatEther(contractStats.totalClaimable),
+            totalClaimed: ethers.utils.formatEther(contractStats.totalClaimed),
+            
+            // Admin information
+            adminCount: adminCount.toNumber(),
+            adminWallets: adminWallets,
+            isAdmin: isMainAdmin,
+            
+            // Main wallet specific data (if admin)
+            myClaimableAmount: ethers.utils.formatEther(mainClaimableAmount),
+            lastClaimedBalance: ethers.utils.formatEther(mainLastClaimedBalance),
+            
+            // Fee structure
+            fees: {
+                microTx: ethers.utils.formatEther(allFees.microTx),
+                volume: ethers.utils.formatEther(allFees.volume),
+                airdrop: ethers.utils.formatEther(allFees.airdrop)
+            },
+            
+            // USD conversions (using current ETH price)
+            ethPriceUSD: ethPriceData.ethPriceUSD || 0,
+            contractBalanceUSD: (parseFloat(ethers.utils.formatEther(contractStats.contractBalance)) * (ethPriceData.ethPriceUSD || 0)).toFixed(2),
+            totalClaimableUSD: (parseFloat(ethers.utils.formatEther(contractStats.totalClaimable)) * (ethPriceData.ethPriceUSD || 0)).toFixed(2),
+            myClaimableAmountUSD: (parseFloat(ethers.utils.formatEther(mainClaimableAmount)) * (ethPriceData.ethPriceUSD || 0)).toFixed(2)
+        };
+
+        log(`✅ Fee contract stats loaded - Balance: ${response.contractBalance} ETH, Admins: ${response.adminCount}`);
+
+        res.json(response);
+
+    } catch (error) {
+        console.error('Error fetching fee contract stats:', error);
+        
+        // Provide helpful error messages based on the error type
+        let errorMessage = 'Failed to fetch fee contract statistics';
+        let errorDetails = error.message;
+        
+        if (error.code === 'CALL_EXCEPTION') {
+            errorMessage = 'Fee contract call failed - contract may not be deployed or ABI mismatch';
+        } else if (error.code === 'NETWORK_ERROR') {
+            errorMessage = 'Network error - check RPC connection';
+        } else if (error.message.includes('reverted')) {
+            errorMessage = 'Contract call reverted - check contract state';
+        }
+
+        res.status(500).json({
+            success: false,
+            error: errorMessage,
+            details: errorDetails,
+            contractAddress: FEE_CONTRACT_CONFIG.address,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Claim fees for the main wallet (admin only)
+app.post('/api/fees/claim', async (req, res) => {
+    try {
+        if (!config.fundingPrivateKey) {
+            return res.status(400).json({
+                success: false,
+                error: 'Main wallet private key not configured'
+            });
+        }
+
+        const mainWallet = new ethers.Wallet(config.fundingPrivateKey, provider);
+        
+        // Initialize fee contract with signer
+        const feeContract = new ethers.Contract(
+            FEE_CONTRACT_CONFIG.address,
+            FEE_CONTRACT_CONFIG.abi,
+            mainWallet
+        );
+
+        log(`💰 Claiming fees for wallet: ${mainWallet.address}`);
+
+        // Check if wallet is admin first
+        const isAdmin = await feeContract.isAdmin(mainWallet.address);
+        if (!isAdmin) {
+            return res.status(403).json({
+                success: false,
+                error: 'Wallet is not an admin and cannot claim fees'
+            });
+        }
+
+        // Check claimable amount
+        const claimableAmount = await feeContract.getMyClaimableAmount();
+        if (claimableAmount.eq(0)) {
+            return res.json({
+                success: false,
+                error: 'No fees available to claim',
+                claimableAmount: '0'
+            });
+        }
+
+        log(`💸 Claimable amount: ${ethers.utils.formatEther(claimableAmount)} ETH`);
+
+        // Get current gas price for transaction
+        const gasData = await calculateGasPrices();
+        const gasPrice = ethers.utils.parseUnits(gasData.adjustedGasPriceGwei.toString(), 9);
+
+        // Execute claim transaction
+        const claimTx = await feeContract.claimFees({
+            gasPrice: gasPrice,
+            gasLimit: 100000 // Standard gas limit for claim transaction
+        });
+
+        log(`📝 Claim transaction submitted: ${claimTx.hash}`);
+
+        // Wait for transaction confirmation
+        const receipt = await claimTx.wait();
+
+        // Calculate actual gas used and cost
+        const gasUsed = receipt.gasUsed;
+        const gasCost = gasUsed.mul(receipt.effectiveGasPrice);
+        const gasCostETH = ethers.utils.formatEther(gasCost);
+        const netAmount = claimableAmount.sub(gasCost);
+
+        log(`✅ Fees claimed successfully! Hash: ${claimTx.hash}, Gas used: ${gasUsed.toString()}`);
+
+        // Parse events to get claimed amount
+        let claimedAmount = ethers.utils.formatEther(claimableAmount);
+        try {
+            const claimEvent = receipt.events?.find(event => event.event === 'FeesClaimed');
+            if (claimEvent) {
+                claimedAmount = ethers.utils.formatEther(claimEvent.args.amount);
+            }
+        } catch (eventError) {
+            log('Could not parse claim event:', eventError.message);
+        }
+
+        res.json({
+            success: true,
+            message: 'Fees claimed successfully',
+            transactionHash: claimTx.hash,
+            blockNumber: receipt.blockNumber,
+            claimedAmount: claimedAmount,
+            gasCost: gasCostETH,
+            netAmount: ethers.utils.formatEther(netAmount),
+            gasUsed: gasUsed.toString(),
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Error claiming fees:', error);
+        
+        let errorMessage = 'Failed to claim fees';
+        let errorDetails = error.message;
+        
+        if (error.code === 'INSUFFICIENT_FUNDS') {
+            errorMessage = 'Insufficient ETH balance to pay for gas fees';
+        } else if (error.code === 'CALL_EXCEPTION') {
+            errorMessage = 'Claim transaction failed - may already be claimed or contract error';
+        } else if (error.message.includes('reverted')) {
+            errorMessage = 'Claim transaction reverted - check contract state';
+        }
+
+        res.status(500).json({
+            success: false,
+            error: errorMessage,
+            details: errorDetails,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Get detailed admin information
+app.get('/api/fees/admin-details', async (req, res) => {
+    try {
+        if (!config.fundingPrivateKey) {
+            return res.status(400).json({
+                success: false,
+                error: 'Main wallet not configured'
+            });
+        }
+
+        const mainWallet = new ethers.Wallet(config.fundingPrivateKey, provider);
+        const feeContract = new ethers.Contract(
+            FEE_CONTRACT_CONFIG.address,
+            FEE_CONTRACT_CONFIG.abi,
+            provider
+        );
+
+        log(`🔍 Fetching admin details for: ${mainWallet.address}`);
+
+        // Get admin-specific data
+        const [
+            isAdmin,
+            claimableAmount,
+            lastClaimedBalance,
+            adminWallets,
+            contractBalance,
+            totalClaimable
+        ] = await Promise.all([
+            feeContract.isAdmin(mainWallet.address),
+            feeContract.getMyClaimableAmount(),
+            feeContract.getLastClaimedBalance(mainWallet.address),
+            feeContract.getAdminWallets(),
+            feeContract.getContractBalance(),
+            feeContract.getTotalClaimableAmount()
+        ]);
+
+        // Get claimable amounts for all admins (if main wallet is admin)
+        let adminDetails = [];
+        if (isAdmin) {
+            try {
+                for (const adminAddress of adminWallets) {
+                    const adminClaimable = await feeContract.getClaimableAmount(adminAddress);
+                    const adminLastClaimed = await feeContract.getLastClaimedBalance(adminAddress);
+                    
+                    adminDetails.push({
+                        address: adminAddress,
+                        claimableAmount: ethers.utils.formatEther(adminClaimable),
+                        lastClaimedBalance: ethers.utils.formatEther(adminLastClaimed),
+                        isCurrentUser: adminAddress.toLowerCase() === mainWallet.address.toLowerCase()
+                    });
+                }
+            } catch (adminError) {
+                log('Error fetching individual admin details:', adminError.message);
+            }
+        }
+
+        const response = {
+            success: true,
+            mainWallet: {
+                address: mainWallet.address,
+                isAdmin: isAdmin,
+                claimableAmount: ethers.utils.formatEther(claimableAmount),
+                lastClaimedBalance: ethers.utils.formatEther(lastClaimedBalance)
+            },
+            contract: {
+                address: FEE_CONTRACT_CONFIG.address,
+                balance: ethers.utils.formatEther(contractBalance),
+                totalClaimable: ethers.utils.formatEther(totalClaimable),
+                adminCount: adminWallets.length
+            },
+            admins: adminDetails,
+            timestamp: new Date().toISOString()
+        };
+
+        res.json(response);
+
+    } catch (error) {
+        console.error('Error fetching admin details:', error);
+        
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch admin details',
+            details: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
 // Enhanced gas price calculation with real blockchain data
 async function calculateGasPrices() {
     try {
@@ -167,7 +509,7 @@ async function calculateGasPrices() {
         console.log('Fetching fresh gas price data...');
 
         // Initialize provider
-        const rpcUrl = process.env.RPC_URL || "https://base-mainnet.g.alchemy.com/v2/your-api-key";
+        const rpcUrl = process.env.RPC_URL;
         let provider;
         
         try {
@@ -1413,14 +1755,38 @@ app.get('/api/dashboard', async (req, res) => {
             try {
                 const mainWallet = new ethers.Wallet(config.fundingPrivateKey, provider);
                 const mainBalance = await provider.getBalance(mainWallet.address);
+
+                // Initialize fee contract
+                const feeContract = new ethers.Contract(
+                    FEE_CONTRACT_CONFIG.address,
+                    FEE_CONTRACT_CONFIG.abi,
+                    provider
+                );
+
+                log(`🔍 Checking admin status for: ${mainWallet.address}`);
+
+                // Get admin-specific data
+                let isAdmin = false
+                try {
+                     isAdmin = await feeContract.isAdmin(mainWallet.address);
+                } catch (feeContractError) {
+                    log('Error checking fee contract:', feeContractError.message);
+                    isAdmin = false
+                }
                 
                 mainWalletInfo = {
                     address: mainWallet.address,
                     balance: ethers.utils.formatEther(mainBalance),
-                    balanceWei: mainBalance.toString()
+                    balanceWei: mainBalance.toString(),
+                    isAdmin
                 };
+
             } catch (error) {
-                mainWalletInfo = { error: 'Failed to load main wallet' };
+                log('Error loading main wallet:', error.message);
+                mainWalletInfo = { 
+                    error: 'Failed to load main wallet',
+                    details: error.message 
+                };
             }
         }
 
@@ -1437,12 +1803,52 @@ app.get('/api/dashboard', async (req, res) => {
         // Get gas prices
         const gasData = await calculateGasPrices();
 
-        res.json({
+        // Calculate wallet statistics
+        let walletStats = {
+            fundedCount: 0,
+            totalBalance: 0,
+            averageBalance: 0
+        };
+
+        // Sample a few wallets for statistics (to avoid timeout)
+        if (wallets.length > 0) {
+            const sampleSize = Math.min(10, wallets.length);
+            let sampleBalance = 0;
+            let fundedInSample = 0;
+
+            for (let i = 0; i < sampleSize; i++) {
+                try {
+                    const balance = await provider.getBalance(wallets[i][0]);
+                    const balanceETH = parseFloat(ethers.utils.formatEther(balance));
+                    sampleBalance += balanceETH;
+                    if (balanceETH > 0) fundedInSample++;
+                    
+                    // Small delay to avoid rate limiting
+                    if (i < sampleSize - 1) await sleep(50);
+                } catch (balanceError) {
+                    // Skip this wallet if balance check fails
+                    continue;
+                }
+            }
+
+            // Extrapolate to full wallet set
+            walletStats = {
+                fundedCount: Math.round((fundedInSample / sampleSize) * wallets.length),
+                totalBalance: (sampleBalance / sampleSize) * wallets.length,
+                averageBalance: sampleBalance / sampleSize,
+                sampleSize: sampleSize
+            };
+        }
+
+        const response = {
             success: true,
             timestamp: new Date().toISOString(),
             dashboard: {
                 wallets: {
                     total: wallets.length,
+                    funded: walletStats.fundedCount,
+                    totalBalance: walletStats.totalBalance.toFixed(6),
+                    averageBalance: walletStats.averageBalance.toFixed(6),
                     firstAddress: wallets.length > 0 ? wallets[0][0] : null,
                     lastAddress: wallets.length > 0 ? wallets[wallets.length - 1][0] : null
                 },
@@ -1457,20 +1863,32 @@ app.get('/api/dashboard', async (req, res) => {
                 gas: {
                     ...gasData
                 },
+                feeContract: {
+                    address: FEE_CONTRACT_CONFIG.address,
+                    isConfigured: true,
+                    adminCount: mainWalletInfo?.admin?.adminCount || 0,
+                    userIsAdmin: mainWalletInfo?.admin?.isAdmin || false
+                },
                 system: {
                     activeProcesses: activeProcesses.size,
                     wsConnections: wsConnections.size,
-                    uptime: process.uptime()
+                    uptime: process.uptime(),
+                    nodeVersion: process.version,
+                    memoryUsage: process.memoryUsage()
                 }
             }
-        });
+        };
+
+        log('✅ Dashboard data compiled successfully');
+        res.json(response);
 
     } catch (error) {
         console.error('Error fetching dashboard data:', error);
         res.status(500).json({
             success: false,
             error: 'Failed to fetch dashboard data',
-            details: error.message
+            details: error.message,
+            timestamp: new Date().toISOString()
         });
     }
 });
