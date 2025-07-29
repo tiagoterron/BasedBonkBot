@@ -331,11 +331,7 @@ if exist "package.json" (
         echo  Config File: %ENV_FILE%
         echo.
         echo  NEXT STEPS:
-        echo.
-        echo 1. Access the folder's project:
-        echo    cd BasedBonkBot
-        echo.
-        echo 2. Start Web Interface:
+        echo 1. Start Web Interface:
         echo    npm start
         echo.
         echo 3. Web GUI will be at: http://localhost:3000
