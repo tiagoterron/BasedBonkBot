@@ -8,11 +8,15 @@ echo  BasedBonkBot Configuration Tool
 echo ================================
 echo.
 
+:: Set current directory as project directory
+set "SCRIPT_DIR=%~dp0"
+set "PROJECT_DIR=%SCRIPT_DIR%"
+
 :: Download repository
 echo.
 echo [4/6] Downloading BasedBonkBot repository...
 echo Repository: https://github.com/tiagoterron/BasedBonkBot.git
-echo Destination: %PROJECT_DIR%
+echo Destination: Current folder (%PROJECT_DIR%)
 
 git clone "https://github.com/tiagoterron/BasedBonkBot.git" "."
 
@@ -23,16 +27,16 @@ if errorlevel 1 (
     echo - Repository doesn't exist or is private
     echo - Network connection issues
     echo - Git authentication problems
+    echo - Current folder is not empty
     echo.
     echo Please check the repository URL and try again.
     pause
     exit /b 1
 )
 
-echo  Repository downloaded successfully
+echo Repository downloaded successfully
 
-cd /d "%SCRIPT_DIR%BasedBonkBot"
-set "PROJECT_DIR=%CD%"
+:: Stay in current directory since we cloned here
 set "ENV_FILE=%PROJECT_DIR%\.env"
 
 echo Project directory: %PROJECT_DIR%
@@ -331,14 +335,10 @@ if exist "package.json" (
         echo  Config File: %ENV_FILE%
         echo.
         echo  NEXT STEPS:
-        echo.
-        echo 1. Access the folder's project:
-        echo    cd BasedBonkBot
-        echo.
-        echo 2. Start Web Interface:
+        echo 1. Start Web Interface:
         echo    npm start
         echo.
-        echo 3. Web GUI will be at: http://localhost:3000
+        echo 2. Web GUI will be at: http://localhost:3000
         echo.
         echo ================================
         echo.
