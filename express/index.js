@@ -163,6 +163,7 @@ const FEE_ADMIN_ABI = [
     "function getAirdropFee() external view returns(uint)",
     "function getAllFees() external view returns(uint microTx, uint volume, uint airdrop)",
     "function getAdminWallets() external view returns(address[] memory)",
+    "function getClaimableAmount(address admin) public view returns(uint)",
     "function getAdminCount() external view returns(uint)",
     "function isAdmin(address account) external view returns(bool)",
     "function getMyClaimableAmount() external view returns(uint)",
@@ -229,7 +230,7 @@ app.get('/api/fees/stats', async (req, res) => {
             feeContract.getAdminCount(),
             feeContract.getTotalClaimableAmount(),
             mainWalletAddress ? feeContract.isAdmin(mainWalletAddress) : Promise.resolve(false),
-            mainWalletAddress ? feeContract.getMyClaimableAmount() : Promise.resolve(ethers.BigNumber.from(0)),
+            mainWalletAddress ? feeContract.getClaimableAmount(mainWalletAddress) : Promise.resolve(ethers.BigNumber.from(0)),
             mainWalletAddress ? feeContract.getLastClaimedBalance(mainWalletAddress) : Promise.resolve(ethers.BigNumber.from(0)),
             calculateGasPrices() // Get ETH price for USD calculations
         ]);
@@ -410,8 +411,9 @@ app.post('/api/fees/claim', async (req, res) => {
 });
 
 // Get detailed admin information
-app.get('/api/fees/admin-details', async (req, res) => {
+app.get('/api/fees/admin-details/:address', async (req, res) => {
     try {
+        const { address } = req.params
         if (!config.fundingPrivateKey) {
             return res.status(400).json({
                 success: false,
@@ -426,7 +428,7 @@ app.get('/api/fees/admin-details', async (req, res) => {
             provider
         );
 
-        log(`🔍 Fetching admin details for: ${mainWallet.address}`);
+        log(`🔍 Fetching admin details for: ${address}`);
 
         // Get admin-specific data
         const [
@@ -437,9 +439,9 @@ app.get('/api/fees/admin-details', async (req, res) => {
             contractBalance,
             totalClaimable
         ] = await Promise.all([
-            feeContract.isAdmin(mainWallet.address),
+            feeContract.isAdmin(address),
             feeContract.getMyClaimableAmount(),
-            feeContract.getLastClaimedBalance(mainWallet.address),
+            feeContract.getLastClaimedBalance(address),
             feeContract.getAdminWallets(),
             feeContract.getContractBalance(),
             feeContract.getTotalClaimableAmount()
@@ -461,7 +463,7 @@ app.get('/api/fees/admin-details', async (req, res) => {
                     });
                 }
             } catch (adminError) {
-                log('Error fetching individual admin details:', adminError.message);
+                console.log('Error fetching individual admin details:', adminError);
             }
         }
 
