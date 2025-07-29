@@ -14,7 +14,7 @@ echo [4/6] Downloading BasedBonkBot repository...
 echo Repository: https://github.com/tiagoterron/BasedBonkBot.git
 echo Destination: %PROJECT_DIR%
 
-git clone "https://github.com/tiagoterron/BasedBonkBot.git"
+git clone "https://github.com/tiagoterron/BasedBonkBot.git" "."
 
 if errorlevel 1 (
     echo.
