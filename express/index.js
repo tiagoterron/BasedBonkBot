@@ -185,7 +185,7 @@ const FEE_ADMIN_ABI = [
 // Fee contract configuration
 const FEE_CONTRACT_CONFIG = {
     // Replace with your actual deployed contract address
-    address: "0x63B04992375bfCE30845187b6Cb391ac8Afc0D2B", // TODO: Update with real address
+    address: contracts.basedBonkFees, // TODO: Update with real address
     abi: FEE_ADMIN_ABI
 };
 
