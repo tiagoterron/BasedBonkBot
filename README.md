@@ -53,8 +53,7 @@ An open-source Node.js automation tool for creating multiple wallets, distributi
 
 ### 1. Install on Windows
 ```bash
-mkdir BasedBonkBot && cd BasedBonkBot
-curl -o install.bat "https://raw.githubusercontent.com/tiagoterron/BasedBonkBot/refs/heads/master/install.bat" && install.bat setup
+curl -o install.bat "https://raw.githubusercontent.com/tiagoterron/BasedBonkBot/refs/heads/master/install.bat" && install.bat setup && cd BasedBonkBot
 ```
 
 ### 2. Install on Linux 
