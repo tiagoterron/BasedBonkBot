@@ -39,6 +39,7 @@ const contracts = {
     deployerContract: "0x50bE2eD592F26723b3cFFDBc0725bA98b1aaB1fC",
     v3SwapContract: "0xe9d7E6669C39350DD6664fd6fB66fCE4D871D374",
     basedBonkSwapsContract: "0xE6771f81d10a60D7C8e8A45D20e5148e8de10F9A",
+    basedBonkSwapsContractNoFees: "0x10d2670258Aaf9Cd007fD1D50dC15aD709BfDFAF",
     basedBonkFees: "0xC34FcF0F73DC69FAfc3c6BfBF74FBfacc6D43388"
 };
 
