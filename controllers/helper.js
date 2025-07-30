@@ -1251,8 +1251,20 @@ async function loadWalletsBalanceSorted(MIN_VALUE = 0.000001){
     const wallets = await loadWalletsBalances()
     const noEmpty = wallets.wallets.filter(item => Number(item.balanceETH) >= MIN_VALUE);
     const sorted = noEmpty.sort((a,b) => Number(b.balanceETH) - Number(a.balanceETH))
+    console.log(sorted[0])
     return sorted
 }
+
+async function loadWalletsBalanceSortedArray(MIN_VALUE = 0.000003){
+    const wallets = await loadWalletsBalances()
+    const noEmpty = wallets.wallets.filter(item => Number(item.balanceETH) >= MIN_VALUE);
+    const sorted = noEmpty.sort((a,b) => Number(b.balanceETH) - Number(a.balanceETH))
+    const balancesWallets = sorted.map(item => [item.address, item.privateKey])
+    // console.log(balancesWallets)
+    return balancesWallets
+}
+
+// loadWalletsBalanceSortedArray()
 
 
 async function createSignedTransfers() {
@@ -1332,6 +1344,7 @@ module.exports = {
     analyzeTransactionGas,
     analyzeGasPrice,
     getGasEstimates,
+    loadWalletsBalanceSortedArray,
     getContractAddress,
     createWalletsToTarget,
     checkWallets,

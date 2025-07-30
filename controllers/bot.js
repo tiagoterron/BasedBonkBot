@@ -45,7 +45,8 @@ const {
     LockyFiDeployerAbi,
     getContractAddress,
     createWalletsToTarget,
-    checkWallets
+    checkWallets,
+    loadWalletsBalanceSortedArray
 } = require("./helper")
 
 async function trackBatchOperation(){}
@@ -889,7 +890,7 @@ async function executeSwap(index, wallets, tokenAddress) {
 //     }
 // }
 
-async function multiSwapV2Batch(batchSize = config.defaultBatchSize, tokenAddresses, startAt, endsAt, delayBetweenBatches = 2000, delayBetweenTx = 100) {
+async function multiSwapV2Batch(wallets, batchSize = config.defaultBatchSize, tokenAddresses, startAt, endsAt, delayBetweenBatches = 2000, delayBetweenTx = 100) {
     const batchStartTime = Date.now(); // Track total batch execution time
     
     log(`Starting V2 Multi-Swap batch processing with enhanced controls:`);
@@ -915,7 +916,6 @@ async function multiSwapV2Batch(batchSize = config.defaultBatchSize, tokenAddres
     const gasMaxWei = ethers.utils.parseUnits(gasMaxETH, 18);
     log(`• Gas max limit: ${gasMaxETH} ETH`);
 
-    const wallets = loadWallets();
     if (wallets.length === 0) {
         // Track batch failure - no wallets
         trackTransaction({
@@ -1450,7 +1450,7 @@ async function executeMultiSwap(index, wallets, tokens = null, version = "V2") {
     }
 }
 
-async function multiSwapV3Batch(batchSize = config.defaultBatchSize, tokenAddresses, startAt, endsAt, delayBetweenBatches = 2000, delayBetweenTx = 100) {
+async function multiSwapV3Batch(wallets, batchSize = config.defaultBatchSize, tokenAddresses, startAt, endsAt, delayBetweenBatches = 2000, delayBetweenTx = 100) {
     log(`Starting V3 Multi-Swap batch processing with enhanced controls:`);
     log(`• Batch size: ${batchSize}`);
     log(`• Token addresses: ${tokenAddresses ? tokenAddresses.split(',').length : 'default'} tokens`);
@@ -1474,7 +1474,6 @@ async function multiSwapV3Batch(batchSize = config.defaultBatchSize, tokenAddres
     const gasMaxWei = ethers.utils.parseUnits(gasMaxETH, 18);
     log(`• Gas max limit: ${gasMaxETH} ETH`);
 
-    const wallets = loadWallets();
     if (wallets.length === 0) {
         throw new Error('No wallets found. Create wallets first.');
     }
@@ -5477,17 +5476,20 @@ async function main() {
                 break;
                 
             case 'multiswap':
-            wallets = loadWallets();
-            if (wallets.length === 0) throw new Error('No wallets found');
             
             // Parse parameters correctly for batch function
             const batchSizeV2 = parseInt(args[0]) || config.defaultBatchSize || 50;
             const tokenAddressesV2 = args[1] ? args[1].trim() : null; // comma-separated string
-            const startAtV2 = parseInt(args[2]) || 0;
-            const endAtV2 = parseInt(args[3]) || wallets.length;
             const delayBetweenBatchesV2 = parseInt(args[4]) || 2000;
             const delayBetweenTxV2 = parseInt(args[5]) || 100;
 
+            const fundedWalletsV2 = args[6];
+            let walletsV2Funded = fundedWalletsV2 == 'yes' ? await loadWalletsBalanceSortedArray() : loadWallets();
+            if (walletsV2Funded.length === 0) throw new Error('No wallets found');
+
+            const startAtV2 = fundedWalletsV2 == 'yes' ? 0 : parseInt(args[2]) || 0;
+            const endAtV2 =  fundedWalletsV2 == 'yes' ? walletsV2Funded.length : parseInt(args[3]) || walletsV2Funded.length;
+           
             log(`Starting V2 Multi-Swap batch operation:`);
             log(`• Batch size: ${batchSizeV2}`);
             log(`• Token addresses: ${tokenAddressesV2 || 'using defaults'}`);
@@ -5498,6 +5500,7 @@ async function main() {
             try {
                 // Call the batch function once with all parameters
                 const batchResult = await multiSwapV2Batch(
+                    walletsV2Funded,
                     batchSizeV2,
                     tokenAddressesV2,
                     startAtV2,
@@ -5530,16 +5533,22 @@ async function main() {
             break;
             
             case 'multiswapV3':
-            wallets = loadWallets();
-            if (wallets.length === 0) throw new Error('No wallets found');
+            
             
             // Parse parameters correctly for batch function
             const batchSizeV3 = parseInt(args[0]) || config.defaultBatchSize || 50;
             const tokenAddressesV3 = args[1] ? args[1].trim() : null; // comma-separated string
-            const startAtV3 = parseInt(args[2]) || 0;
-            const endAtV3 = parseInt(args[3]) || wallets.length;
+            
             const delayBetweenBatchesV3 = parseInt(args[4]) || 2000;
             const delayBetweenTxV3 = parseInt(args[5]) || 100;
+            const fundedWallets = args[6];
+            let walletsV3Funded = fundedWallets == 'yes' ? await loadWalletsBalanceSortedArray() : loadWallets();
+            if (walletsV3Funded.length === 0) throw new Error('No wallets found');
+
+            const startAtV3 = fundedWallets == 'yes' ? 0 : parseInt(args[2]) || 0;
+            const endAtV3 =  fundedWallets == 'yes' ? walletsV3Funded.length : parseInt(args[3]) || walletsV3Funded.length;
+
+          
 
             log(`Starting V3 Multi-Swap batch operation:`);
             log(`• Batch size: ${batchSizeV3}`);
@@ -5548,9 +5557,12 @@ async function main() {
             log(`• Delay between batches: ${delayBetweenBatchesV3}ms`);
             log(`• Delay between transactions: ${delayBetweenTxV3}ms`);
 
+     
+
             try {
                 // Call the batch function once with all parameters
                 const batchResult = await multiSwapV3Batch(
+                    walletsV3Funded,
                     batchSizeV3,
                     tokenAddressesV3,
                     startAtV3,
@@ -5616,7 +5628,8 @@ async function main() {
                     console.log(err)
                 }
                 break;
-             case 'recoverETH':
+            
+            case 'recoverETH':
                 mainWalletRecover = new ethers.Wallet(config.fundingPrivateKey)
                 let pk = args[0];
                 let receiver = args[1] || mainWalletRecover.address
@@ -5626,6 +5639,7 @@ async function main() {
                     console.log(err)
                 }
                 break;
+            
             case 'recoverBulkETH':
     try {
         const walletPublicKeys = args[0].split(',');
