@@ -7,3 +7,5 @@ app
 tokens.json
 .last_update_check
 backup
+meempool.js
+telegram_bot

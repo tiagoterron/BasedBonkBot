@@ -1,6 +1,10 @@
+![User Interface - Airdrops to Local Wallets Section](./images/basedbonk.png.png)
+
 # 🚀 BasedBonkBot
 
 An open-source Node.js automation tool for creating multiple wallets, distributing ETH via airdrops, deploying VolumeSwap contracts, and executing automated token swaps on Base network. Now featuring **Uniswap V3 integration**, **advanced gas management**, **configurable timing controls**, and **intelligent transaction optimization** for maximum efficiency and cost control.
+
+![User Interface - Gas Calculator Section](./images/image_gui1.png)
 
 > **📢 Open Source Project**: This project is completely open source and free to use. Feel free to fork, modify, and distribute according to your needs!
 
@@ -19,6 +23,8 @@ An open-source Node.js automation tool for creating multiple wallets, distributi
 - **🔄 Continuous Automation**: Create, fund, swap, and recover in automated cycles
 - **💸 Automatic ETH Recovery**: Smart ETH recovery system to minimize losses
 
+![User Interface Wallets Section](./images/image_gui2.png)
+
 ### 🆕 NEW: Uniswap V3 Integration
 
 - **🎯 V3 Fee Tiers**: Support for 0.05%, 0.3%, and 1% fee tiers
@@ -27,6 +33,8 @@ An open-source Node.js automation tool for creating multiple wallets, distributi
 - **🔄 ETH→WETH Handling**: Automatic ETH to WETH conversion for V3 swaps
 - **💎 V3 Analytics**: Fee tier performance tracking and optimization
 - **🎛️ V3 Automation**: Full V3 continuous automation support
+
+![User Interface - Volume Generate Section](./images/image_gui3.png)
 
 ### 🆕 Advanced Gas Management & Timing Controls
 
@@ -37,6 +45,8 @@ An open-source Node.js automation tool for creating multiple wallets, distributi
 - **⚖️ Dynamic Adjustments**: Smart timing adjustments based on success rates
 - **💰 Cost Optimization**: Prevent expensive transactions during high gas periods
 - **📈 Enhanced Analytics**: Detailed gas cost breakdowns and performance metrics
+
+![User Interface - MicroTX Section](./images/image_gui4.png)
 
 ## 🏗️ Architecture
 
@@ -49,6 +59,11 @@ An open-source Node.js automation tool for creating multiple wallets, distributi
 └── automation.log      # Execution logs
 ```
 
+![User Interface - Airdrops to Local Wallets Section](./images/image_gui5.png)
+
+![User Interface - Analyses Section](./images/image_gui6.png)
+
+![User Interface - Tokens Database Section](./images/image_gui7.png)
 ## 🚀 Quick Start
 
 ### 1. Install on Windows
