@@ -1,4 +1,4 @@
-![User Interface - Airdrops to Local Wallets Section](./images/basedbonk.png.png)
+![User Interface - Based Bonk Bot](./images/basedbonk.png)
 
 # 🚀 BasedBonkBot
 
